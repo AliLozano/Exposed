@@ -14,6 +14,7 @@ import org.jetbrains.exposed.sql.tests.currentDialectTest
 import org.jetbrains.exposed.sql.tests.inProperCase
 import org.jetbrains.exposed.sql.tests.shared.dml.DMLTestsData
 import org.jetbrains.exposed.sql.transactions.TransactionManager
+import org.jetbrains.exposed.sql.vendors.PostgreSQLDialect
 import org.jetbrains.exposed.sql.vendors.SQLiteDialect
 import org.junit.Test
 import org.postgresql.util.PGobject
@@ -55,93 +56,6 @@ class DDLTests : DatabaseTestsBase() {
             KeyWordTable.insert {
                 it[bool] = true
             }
-        }
-    }
-
-
-    @Test fun testCreateMissingTablesAndColumns01() {
-        val TestTable = object : Table("test_table") {
-            val id = integer("id").primaryKey()
-            val name = varchar("name", length = 42)
-            val time = long("time").uniqueIndex()
-        }
-
-        withTables(excludeSettings = listOf(TestDB.H2_MYSQL), tables = *arrayOf(TestTable)) {
-            SchemaUtils.createMissingTablesAndColumns(TestTable)
-            assertTrue(TestTable.exists())
-            SchemaUtils.drop(TestTable)
-        }
-    }
-
-    @Test fun testCreateMissingTablesAndColumns02() {
-        val TestTable = object : IdTable<String>("Users2") {
-            override val id: Column<EntityID<String>> = varchar("id", 64).clientDefault { UUID.randomUUID().toString() }.primaryKey().entityId()
-
-            val name = varchar("name", 255)
-            val email = varchar("email", 255).uniqueIndex()
-            val camelCased = varchar("camelCased", 255).index()
-        }
-
-        withDb {
-            if (!db.url.startsWith("jdbc:mysql:mxj")) {
-                SchemaUtils.createMissingTablesAndColumns(TestTable)
-                assertTrue(TestTable.exists())
-                try {
-                    SchemaUtils.createMissingTablesAndColumns(TestTable)
-                } finally {
-                    SchemaUtils.drop(TestTable)
-                }
-            }
-        }
-    }
-
-    @Test fun testCreateMissingTablesAndColumnsChangeNullability() {
-        val t1 = object : IntIdTable("foo") {
-            val foo = varchar("foo", 50)
-        }
-
-        val t2 = object : IntIdTable("foo") {
-            val foo = varchar("foo", 50).nullable()
-        }
-
-        withDb(excludeSettings = listOf(TestDB.SQLITE)) {
-            SchemaUtils.createMissingTablesAndColumns(t1)
-            t1.insert { it[foo] = "ABC" }
-            assertFailAndRollback("Can't insert to not-null column") {
-                t2.insert { it[foo] = null }
-            }
-
-            SchemaUtils.createMissingTablesAndColumns(t2)
-            t2.insert { it[foo] = null }
-            assertFailAndRollback("Can't make column non-null while has null value") {
-                SchemaUtils.createMissingTablesAndColumns(t1)
-            }
-
-            t2.deleteWhere { t2.foo.isNull() }
-
-            SchemaUtils.createMissingTablesAndColumns(t1)
-            assertFailAndRollback("Can't insert to nullable column") {
-                t2.insert { it[foo] = null }
-            }
-            SchemaUtils.drop(t1)
-        }
-    }
-
-    @Test fun testCreateMissingTablesAndColumnsChangeCascadeType() {
-        val fooTable = object : IntIdTable("foo") {
-            val foo = varchar("foo", 50)
-        }
-
-        val barTable1 = object : IntIdTable("bar") {
-            val foo = optReference("foo", fooTable, onDelete = ReferenceOption.NO_ACTION)
-        }
-
-        val barTable2 = object : IntIdTable("bar") {
-            val foo = optReference("foo", fooTable, onDelete = ReferenceOption.CASCADE)
-        }
-
-        withTables(fooTable, barTable1) {
-            SchemaUtils.createMissingTablesAndColumns(barTable2)
         }
     }
 
@@ -438,7 +352,7 @@ class DDLTests : DatabaseTestsBase() {
 
         fun SizedIterable<ResultRow>.readAsString() = map { String(it[tableWithBinary.binaryColumn]) }
 
-        withDb(listOf(TestDB.ORACLE,TestDB.POSTGRESQL)) {
+        withDb(listOf(TestDB.ORACLE, TestDB.POSTGRESQL, TestDB.POSTGRESQLNG)) {
             val exposedBytes = "Exposed".toByteArray()
             val kotlinBytes = "Kotlin".toByteArray()
 
@@ -509,44 +423,6 @@ class DDLTests : DatabaseTestsBase() {
             assertEquals("'injected''value'", TextColumnType().nonNullValueToString("injected'value"))
         }
     }
-
-    @Test fun addAutoPrimaryKey() {
-        val tableName = "Foo"
-        val initialTable = object : Table(tableName) {
-            val bar = text("bar")
-        }
-        val t = IntIdTable(tableName)
-
-
-        withDb(TestDB.H2) {
-            SchemaUtils.createMissingTablesAndColumns(initialTable)
-            assertEquals("ALTER TABLE ${tableName.inProperCase()} ADD ${"id".inProperCase()} ${t.id.columnType.sqlType()}", t.id.ddl.first())
-            assertEquals("ALTER TABLE ${tableName.inProperCase()} ADD CONSTRAINT pk_$tableName PRIMARY KEY (${"id".inProperCase()})", t.id.ddl[1])
-            assertEquals(1, currentDialectTest.tableColumns(t)[t]!!.size)
-            SchemaUtils.createMissingTablesAndColumns(t)
-            assertEquals(2, currentDialectTest.tableColumns(t)[t]!!.size)
-            SchemaUtils.drop(t)
-        }
-
-        withDb(TestDB.SQLITE) {
-            try {
-                SchemaUtils.createMissingTablesAndColumns(t)
-                assertFalse(db.supportsAlterTableWithAddColumn)
-            } catch (e: SQLException) {
-                // SQLite doesn't support
-            } finally {
-                SchemaUtils.drop(t)
-            }
-        }
-
-        withTables(excludeSettings = listOf(TestDB.H2, TestDB.H2_MYSQL, TestDB.SQLITE), tables = *arrayOf(initialTable)) {
-            assertEquals("ALTER TABLE ${tableName.inProperCase()} ADD ${"id".inProperCase()} ${t.id.columnType.sqlType()} PRIMARY KEY", t.id.ddl)
-            assertEquals(1, currentDialectTest.tableColumns(t)[t]!!.size)
-            SchemaUtils.createMissingTablesAndColumns(t)
-            assertEquals(2, currentDialectTest.tableColumns(t)[t]!!.size)
-        }
-    }
-
 
     private abstract class EntityTable(name: String = "") : IdTable<String>(name) {
         override val id: Column<EntityID<String>> = varchar("id", 64).clientDefault { UUID.randomUUID().toString() }.primaryKey().entityId()
@@ -773,36 +649,26 @@ class DDLTests : DatabaseTestsBase() {
     }
 
     @Test
-    fun createTableWithMultipleIndexes() {
-        withDb {
-            SchemaUtils.createMissingTablesAndColumns(MultipleIndexesTable)
-        }
-    }
-
-    object MultipleIndexesTable: Table("H2_MULTIPLE_INDEXES") {
-        val value1 = varchar("value1", 255)
-        val value2 = varchar("value2", 255)
-
-        init {
-            uniqueIndex("index1", value1, value2)
-            uniqueIndex("index2", value2, value1)
-        }
-    }
-
-    @Test
     fun createTableWithForeignKeyToAnotherSchema() {
         withDb(excludeSettings = listOf(TestDB.SQLITE)) {
-            exec("CREATE SCHEMA ${"one".inProperCase()}")
-            exec("CREATE SCHEMA ${"two".inProperCase()}")
-            SchemaUtils.create(TableFromSchemeOne, TableFromSchemeTwo)
-            val idFromOne = TableFromSchemeOne.insertAndGetId {  }
+            try {
+                exec("CREATE SCHEMA ${"one".inProperCase()}")
+                exec("CREATE SCHEMA ${"two".inProperCase()}")
+                SchemaUtils.create(TableFromSchemeOne, TableFromSchemeTwo)
+                val idFromOne = TableFromSchemeOne.insertAndGetId { }
 
-            TableFromSchemeTwo.insert {
-                it[reference] = idFromOne
+                TableFromSchemeTwo.insert {
+                    it[reference] = idFromOne
+                }
+
+                assertEquals(1L, TableFromSchemeOne.selectAll().count())
+                assertEquals(1L, TableFromSchemeTwo.selectAll().count())
+            } finally {
+                if(currentDialectTest is PostgreSQLDialect) {
+                    exec("DROP SCHEMA IF EXISTS ${"one".inProperCase()} CASCADE")
+                    exec("DROP SCHEMA IF EXISTS ${"two".inProperCase()} CASCADE")
+                }
             }
-
-            assertEquals(1L, TableFromSchemeOne.selectAll().count())
-            assertEquals(1L, TableFromSchemeTwo.selectAll().count())
         }
     }
 

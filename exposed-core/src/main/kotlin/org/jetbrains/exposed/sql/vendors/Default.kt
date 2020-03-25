@@ -7,8 +7,6 @@ import java.nio.ByteBuffer
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
-internal typealias TableAndColumnName = Pair<String, String>
-
 /**
  * Provides definitions for all the supported SQL data types.
  * By default, definitions from the SQL standard are provided but if a vendor doesn't support a specific type, or it is
@@ -505,6 +503,8 @@ interface DatabaseDialect {
     /** Returns`true` if the dialect supports returning generated keys obtained from a sequence. */
     val supportsSequenceAsGeneratedKeys: Boolean get() = supportsCreateSequence
     val supportsOnlyIdentifiersInGeneratedKeys: Boolean get() = false
+    /** Returns`true` if the dialect supports schema creation. */
+    val supportsCreateSchema: Boolean get() = true
 
     /** Returns the name of the current database. */
     fun getDatabase(): String
@@ -521,7 +521,7 @@ interface DatabaseDialect {
     fun tableColumns(vararg tables: Table): Map<Table, List<ColumnMetadata>> = emptyMap()
 
     /** Returns a map with the foreign key constraints of all the defined columns in each of the specified [tables]. */
-    fun columnConstraints(vararg tables: Table): Map<TableAndColumnName, List<ForeignKeyConstraint>> = emptyMap()
+    fun columnConstraints(vararg tables: Table): Map<Pair<Table, Column<*>>, List<ForeignKeyConstraint>> = emptyMap()
 
     /** Returns a map with all the defined indices in each of the specified [tables]. */
     fun existingIndices(vararg tables: Table): Map<Table, List<Index>> = emptyMap()
@@ -552,6 +552,8 @@ interface DatabaseDialect {
     fun createDatabase(name: String) = "CREATE DATABASE IF NOT EXISTS ${name.inProperCase()}"
 
     fun dropDatabase(name: String) = "DROP DATABASE IF EXISTS ${name.inProperCase()}"
+
+    fun setSchema(schema: Schema): String = "SET SCHEMA ${schema.identifier}"
 }
 
 /**
@@ -564,41 +566,60 @@ abstract class VendorDialect(
 ) : DatabaseDialect {
 
     /* Cached values */
-    private var _allTableNames: List<String>? = null
-    /** Returns a list with the names of all the defined tables. */
+    private var _allTableNames: Map<String, List<String>>? = null
+    /** Returns a list with the names of all the defined tables within default scheme. */
     val allTablesNames: List<String>
         get() {
-            if (_allTableNames == null) {
-                _allTableNames = allTablesNames()
-            }
-            return _allTableNames!!
+            val connection = TransactionManager.current().connection
+            return getAllTableNamesCache().getValue(connection.metadata { currentScheme })
         }
+
+    private fun getAllTableNamesCache(): Map<String, List<String>> {
+        val connection = TransactionManager.current().connection
+        if (_allTableNames == null) {
+            _allTableNames = connection.metadata { tableNames }
+        }
+        return _allTableNames!!
+    }
 
     override val supportsMultipleGeneratedKeys: Boolean = true
 
     override fun getDatabase(): String = catalog(TransactionManager.current())
 
     /**
-     * Returns a list with the names of all the defined tables.
+     * Returns a list with the names of all the defined tables with schema prefixes if database supports it.
      * This method always re-read data from DB.
      * Using `allTablesNames` field is the preferred way.
      */
-    override fun allTablesNames(): List<String> = TransactionManager.current().connection.metadata { tableNames }
+    override fun allTablesNames(): List<String> = TransactionManager.current().connection.metadata {
+        tableNames.getValue(currentScheme)
+    }
 
-    override fun tableExists(table: Table): Boolean = allTablesNames.any { it == table.nameInDatabaseCase() }
+    override fun tableExists(table: Table): Boolean {
+        val tableScheme = table.tableName.substringBefore('.', "").takeIf { it.isNotEmpty() }
+        val scheme = tableScheme?.inProperCase() ?: TransactionManager.current().connection.metadata { currentScheme }
+        val allTables = getAllTableNamesCache().getValue(scheme)
+        return allTables.any {
+            when {
+                tableScheme != null -> it == table.nameInDatabaseCase()
+                scheme.isEmpty() -> it == table.nameInDatabaseCase()
+                else -> it == "$scheme.${table.tableNameWithoutScheme}".inProperCase()
+            }
+        }
+    }
 
     override fun tableColumns(vararg tables: Table): Map<Table, List<ColumnMetadata>> =
         TransactionManager.current().connection.metadata { columns(*tables) }
 
-    override fun columnConstraints(vararg tables: Table): Map<Pair<String, String>, List<ForeignKeyConstraint>> {
-        val constraints = HashMap<Pair<String, String>, MutableList<ForeignKeyConstraint>>()
+    override fun columnConstraints(vararg tables: Table): Map<Pair<Table, Column<*>>, List<ForeignKeyConstraint>> {
+        val constraints = HashMap<Pair<Table, Column<*>>, MutableList<ForeignKeyConstraint>>()
 
         val tablesToLoad = tables.filter { !columnConstraintsCache.containsKey(it.nameInDatabaseCase()) }
 
         fillConstraintCacheForTables(tablesToLoad)
         tables.forEach { table ->
             columnConstraintsCache[table.nameInDatabaseCase()].orEmpty().forEach {
-                constraints.getOrPut(it.fromTable to it.fromColumn) { arrayListOf() }.add(it)
+                constraints.getOrPut(it.from.table to it.from) { arrayListOf() }.add(it)
             }
 
         }

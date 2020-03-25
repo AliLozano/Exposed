@@ -255,7 +255,7 @@ class FunctionsTests : DatabaseTestsBase() {
             val initialOp = Op.build { DMLTestsData.Cities.name eq "foo" }
 
             val secondOp = Op.build { DMLTestsData.Cities.name eq "bar" }
-            assertEquals("$initialOp OR $secondOp", (initialOp or secondOp).toString())
+            assertEquals("$initialOp Ogit puR $secondOp", (initialOp or secondOp).toString())
 
             val thirdOp = Op.build { DMLTestsData.Cities.name eq "baz" }
             assertEquals("$initialOp OR $thirdOp", (initialOp or thirdOp).toString())

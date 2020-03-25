@@ -14,6 +14,7 @@ import org.jetbrains.exposed.sql.vendors.MysqlDialect
 import org.junit.Test
 import java.math.BigDecimal
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 class InsertTests : DatabaseTestsBase() {
     @Test
@@ -44,7 +45,7 @@ class InsertTests : DatabaseTestsBase() {
     }
 
     private val insertIgnoreSupportedDB = TestDB.values().toList() -
-            listOf(TestDB.SQLITE, TestDB.MYSQL, TestDB.H2_MYSQL, TestDB.POSTGRESQL)
+            listOf(TestDB.SQLITE, TestDB.MYSQL, TestDB.H2_MYSQL, TestDB.POSTGRESQL, TestDB.POSTGRESQLNG)
 
     @Test
     fun testInsertIgnoreAndGetId01() {
@@ -75,13 +76,35 @@ class InsertTests : DatabaseTestsBase() {
     }
 
     @Test
+    fun `test insert and get id when column has different name`() {
+        val testTableWithId = object : IdTable<Int>("testTableWithId") {
+            val code = integer("code")
+            override val id: Column<EntityID<Int>> = code.entityId()
+        }
+
+        withTables(testTableWithId) {
+            val id1 = testTableWithId.insertAndGetId {
+                it[code] = 1
+            }
+            assertNotNull(id1)
+            assertEquals(1, id1.value)
+
+            val id2 = testTableWithId.insert {
+                it[code] = 2
+            } get testTableWithId.id
+            assertNotNull(id2)
+            assertEquals(2, id2.value)
+        }
+    }
+
+    @Test
     fun testInsertIgnoreAndGetIdWithPredefinedId() {
         val idTable = object : IntIdTable("tmp") {
             val name = varchar("foo", 10).uniqueIndex()
         }
 
         val insertIgnoreSupportedDB = TestDB.values().toList() -
-                listOf(TestDB.SQLITE, TestDB.MYSQL, TestDB.H2_MYSQL, TestDB.POSTGRESQL)
+                listOf(TestDB.SQLITE, TestDB.MYSQL, TestDB.H2_MYSQL, TestDB.POSTGRESQL, TestDB.POSTGRESQLNG)
         withTables(insertIgnoreSupportedDB, idTable) {
             val id = idTable.insertIgnore {
                 it[idTable.id] = EntityID(1, idTable)
@@ -275,7 +298,7 @@ class InsertTests : DatabaseTestsBase() {
         }
         val emojis = "\uD83D\uDC68\uD83C\uDFFF\u200D\uD83D\uDC69\uD83C\uDFFF\u200D\uD83D\uDC67\uD83C\uDFFF\u200D\uD83D\uDC66\uD83C\uDFFF"
 
-        withTables(listOf(TestDB.SQLITE, TestDB.H2, TestDB.H2_MYSQL, TestDB.POSTGRESQL), table) {
+        withTables(listOf(TestDB.SQLITE, TestDB.H2, TestDB.H2_MYSQL, TestDB.POSTGRESQL, TestDB.POSTGRESQLNG), table) {
             expectException<IllegalStateException> {
                 table.insert {
                     it[table.emoji] = emojis

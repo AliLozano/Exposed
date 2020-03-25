@@ -381,6 +381,7 @@ open class BasicBinaryColumnType : ColumnType() {
 
     override fun valueFromDB(value: Any): Any = when (value) {
         is Blob -> value.binaryStream.readBytes()
+        is InputStream -> value.readBytes()
         else -> value
     }
 

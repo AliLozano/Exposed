@@ -53,10 +53,10 @@ fun FieldSet.selectAllBatched(
 /**
  * @sample org.jetbrains.exposed.sql.tests.shared.DMLTests.testDelete01
  */
-fun Table.deleteWhere(limit: Int? = null, offset: Int? = null, op: SqlExpressionBuilder.()->Op<Boolean>) =
+fun Table.deleteWhere(limit: Int? = null, offset: Long? = null, op: SqlExpressionBuilder.()->Op<Boolean>) =
     DeleteStatement.where(TransactionManager.current(), this@deleteWhere, SqlExpressionBuilder.op(), false, limit, offset)
 
-fun Table.deleteIgnoreWhere(limit: Int? = null, offset: Int? = null, op: SqlExpressionBuilder.()->Op<Boolean>) =
+fun Table.deleteIgnoreWhere(limit: Int? = null, offset: Long? = null, op: SqlExpressionBuilder.()->Op<Boolean>) =
     DeleteStatement.where(TransactionManager.current(), this@deleteIgnoreWhere, SqlExpressionBuilder.op(), true, limit, offset)
 
 /**
@@ -287,7 +287,7 @@ private fun checkMissingIndices(vararg tables: Table): List<Index> {
     val fKeyConstraints = currentDialect.columnConstraints(*tables).keys
     val existingIndices = currentDialect.existingIndices(*tables)
     fun List<Index>.filterFKeys() = if (isMysql)
-        filterNot { (it.table.tableName.inProperCase() to it.columns.singleOrNull()?.let { c -> tr.identity(c) }) in fKeyConstraints }
+        filterNot { it.table to it.columns.singleOrNull() in fKeyConstraints }
     else
         this
 
