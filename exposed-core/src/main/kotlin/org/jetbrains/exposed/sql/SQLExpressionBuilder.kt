@@ -123,7 +123,8 @@ fun CustomLongFunction(
 
 
 
-open class SqlExpressionBuilderClass {
+@Suppress("INAPPLICABLE_JVM_NAME")
+interface SqlExpressionBuilderClass {
 
     // Comparison Operators
 
@@ -381,4 +382,4 @@ open class SqlExpressionBuilderClass {
 /**
  * Builder object for creating SQL expressions.
  */
-object SqlExpressionBuilder: SqlExpressionBuilderClass()
+object SqlExpressionBuilder: SqlExpressionBuilderClass
